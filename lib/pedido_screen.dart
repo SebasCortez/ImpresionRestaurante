@@ -1,7 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'database_helper.dart';
 import 'impresora_service.dart';
-import 'historial_screen.dart'; // Importamos la nueva pantalla del CRUD
+import 'historial_screen.dart';
 
 class PedidoScreen extends StatefulWidget {
   const PedidoScreen({super.key});
@@ -11,73 +12,92 @@ class PedidoScreen extends StatefulWidget {
 }
 
 class _PedidoScreenState extends State<PedidoScreen> {
-  // Controladores para capturar el texto de la interfaz
-  final TextEditingController _ipController = TextEditingController(text: "192.168.1.150");
-  final TextEditingController _mesaController = TextEditingController(text: "Mesa 04");
-  final TextEditingController _productosController = TextEditingController(
-      text: "2x Ceviche Clásico\n1x Jalea Mixta\n1x Chicha Morada Jarra"
-  );
-  final TextEditingController _totalController = TextEditingController(text: "85.00");
-
+  final TextEditingController _mesaController = TextEditingController(text: "Mesa 05");
+  final Map<int, int> _cantidadesSeleccionadas = {};
+  List<Map<String, dynamic>> _menuProductos = [];
   bool _cargando = false;
 
-  void _procesarPedidoYImpresion() async {
+  @override
+  void initState() {
+    super.initState();
+    _cargarCatalogoMenu();
+  }
+
+  void _cargarCatalogoMenu() async {
+    final productos = await DatabaseHelper.instance.obtenerProductosMenu();
+    if (!mounted) return;
+    setState(() {
+      _menuProductos = productos;
+    });
+  }
+
+  double _calcularTotal() {
+    double total = 0.0;
+    for (var producto in _menuProductos) {
+      int id = producto['id'];
+      int cantidad = _cantidadesSeleccionadas[id] ?? 0;
+      if (cantidad > 0) {
+        total += (producto['precio'] * cantidad);
+      }
+    }
+    return total;
+  }
+
+  void _enviarPedidoSistema() async {
+    List<Map<String, dynamic>> itemsParaDespachar = [];
+
+    for (var producto in _menuProductos) {
+      int id = producto['id'];
+      int cantidad = _cantidadesSeleccionadas[id] ?? 0;
+      if (cantidad > 0) {
+        var itemFormateado = Map<String, dynamic>.from(producto);
+        itemFormateado['cantidad'] = cantidad;
+        itemsParaDespachar.add(itemFormateado);
+      }
+    }
+
+    if (itemsParaDespachar.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Por favor selecciona al menos un producto.")),
+      );
+      return;
+    }
+
     setState(() { _cargando = true; });
 
-    final nuevoPedido = {
-      'mesa': _mesaController.text,
-      'productos': _productosController.text,
-      'total': double.tryParse(_totalController.text) ?? 0.0,
-      'fecha': DateTime.now().toString().substring(0, 19),
-    };
-
     try {
-      // 1. Guardar Localmente en SQLite
-      int idGuardado = await DatabaseHelper.instance.insertarPedido(nuevoPedido);
+      final nuevoPedido = {
+        'mesa': _mesaController.text,
+        'items': jsonEncode(itemsParaDespachar),
+        'total': _calcularTotal(),
+        'fecha': DateTime.now().toString().substring(0, 19),
+      };
 
-      // 2. Levantar el gestor de impresión A4 de Android
-      bool impresionExitosa = await ImpresoraService().imprimirPedidoA4(nuevoPedido);
+      await DatabaseHelper.instance.insertarPedido(nuevoPedido);
+      await ImpresoraService().despacharComandasPorCategoria(_mesaController.text, itemsParaDespachar);
 
-      if (impresionExitosa) {
-        _mostrarAlerta("Éxito", "Pedido #$idGuardado registrado en SQLite.");
-      } else {
-        // CORREGIDO: Quitamos la variable 'ipImpresora' que causaba el error
-        _mostrarAlerta("Aviso", "Pedido #$idGuardado guardado en SQLite local, pero se canceló o falló el envío a la impresora.");
-      }
-    } catch (error) {
-      _mostrarAlerta("Error General", "Ocurrió un problema inesperado: $error");
+      if (!mounted) return;
+      setState(() { _cantidadesSeleccionadas.clear(); });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("¡Pedido procesado y enviado a sus respectivas áreas!")),
+      );
+    } catch (e) {
+      debugPrint("Error general: $e");
     } finally {
-    setState(() { _cargando = false; });
-  }
-  }
-
-  void _mostrarAlerta(String titulo, String mensaje) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(titulo),
-        content: Text(mensaje),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text("OK")
-          )
-        ],
-      ),
-    );
+      if (mounted) setState(() { _cargando = false; });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("POS Restaurante Local", style: TextStyle(color: Colors.white)),
-        backgroundColor: Colors.green,
-        // Agregamos el botón en el AppBar para abrir el CRUD
+        title: const Text("Toma de Pedidos", style: TextStyle(color: Colors.white)),
+        backgroundColor: Colors.orange,
         actions: [
           IconButton(
             icon: const Icon(Icons.list_alt, color: Colors.white, size: 28),
-            tooltip: "Ver Historial CRUD",
             onPressed: () {
               Navigator.push(
                 context,
@@ -89,57 +109,75 @@ class _PedidoScreenState extends State<PedidoScreen> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("Configuración de Red:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              TextField(
-                controller: _ipController,
-                decoration: const InputDecoration(
-                    labelText: "IP de la Impresora (Puerto 9100)",
-                    hintText: "Ej. 192.168.1.150"
-                ),
-                keyboardType: TextInputType.number, // Teclado numérico limpio
+        child: Column(
+          children: [
+            TextField(
+              controller: _mesaController,
+              decoration: const InputDecoration(labelText: "Número de Mesa", icon: Icon(Icons.table_restaurant)),
+            ),
+            const SizedBox(height: 15),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text("Menú del Establecimiento:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: _menuProductos.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView.builder(
+                itemCount: _menuProductos.length,
+                itemBuilder: (context, index) {
+                  final producto = _menuProductos[index];
+                  int id = producto['id'];
+                  int cantidadActual = _cantidadesSeleccionadas[id] ?? 0;
+
+                  return Card(
+                    child: ListTile(
+                      title: Text(producto['nombre'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text("${producto['categoria_nombre']} - S/. ${producto['precio'].toStringAsFixed(2)}"),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
+                            onPressed: cantidadActual > 0 ? () {
+                              setState(() { _cantidadesSeleccionadas[id] = cantidadActual - 1; });
+                            } : null,
+                          ),
+                          Text('$cantidadActual', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          IconButton(
+                            icon: const Icon(Icons.add_circle_outline, color: Colors.green),
+                            onPressed: () {
+                              setState(() { _cantidadesSeleccionadas[id] = cantidadActual + 1; });
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
-              const SizedBox(height: 25),
-              const Text("Datos del Pedido:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              TextField(
-                controller: _mesaController,
-                decoration: const InputDecoration(labelText: "Identificador de Mesa"),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 10),
+              decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(8)),
+              child: Row(
+                // CORREGIDO: spaceBetween con B mayúscula
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text("Total Actual: S/. ${_calcularTotal().toStringAsFixed(2)}",
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ElevatedButton(
+                    onPressed: _cargando ? null : _enviarPedidoSistema,
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                    child: _cargando
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text("DESPACHAR ORDEN", style: TextStyle(color: Colors.white)),
+                  )
+                ],
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _productosController,
-                decoration: const InputDecoration(labelText: "Productos (Líneas independientes)"),
-                maxLines: 4,
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _totalController,
-                decoration: const InputDecoration(labelText: "Total de la cuenta (S/.)"),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              ),
-              const SizedBox(height: 35),
-              SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton(
-                  onPressed: _cargando ? null : _procesarPedidoYImpresion,
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
-                  ),
-                  child: _cargando
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text(
-                      "GUARDAR E IMPRIMIR",
-                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)
-                  ),
-                ),
-              )
-            ],
-          ),
+            )
+          ],
         ),
       ),
     );
