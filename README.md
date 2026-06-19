@@ -1,31 +1,36 @@
-# POS Restaurante Local (Híbrido Móvil/Web)
+# POS para Restaurante (Móvil y Web)
 
-Sistema Punto de Venta (POS) local desarrollado en **Flutter** para la gestión e impresión automatizada de comandas en formato **A4**, con soporte híbrido para dispositivos móviles (Android) y navegadores web.
+Este es un sistema de Punto de Venta (POS) local que armé en **Flutter** para tomar pedidos en restaurantes. Lo genial es que funciona tanto en tablets/celulares Android como en la web, y está pensado para ser *Local-First* (es decir, no depende para nada de internet; si el Wi-Fi parpadea, el negocio sigue facturando sin perder datos).
 
-## 🚀 Explicación de lo que se está usando
-*   **Impresión sin restricciones:** La librería `printing` y `pdf` se puede usar en impresoras con IPv4 estático y también en las que no tienen IP. El sistema autodetecta dinámicamente las impresoras mediante el spooler nativo de Android en entornos móviles, o a través del cuadro de diálogo nativo del navegador en entornos web[cite: 1, 2].
+## Cómo funciona la impresión (El punto clave)
+Para que no nos amarremos a una marca específica de tiqueteras térmicas de comandos (`ESC/POS`), decidí maquetar todo de forma vectorial usando **hojas A4 (PDF)**. 
 
----
-
-## 🛠️ Estructura del Proyecto (`lib/`)
-*   `main.dart`: Inicialización global y punto de entrada de la aplicación[cite: 1, 2].
-*   `database_helper.dart`: Gestión relacional del CRUD mediante SQLite en dispositivos móviles, adaptado con persistencia simulada en memoria limpia para la arquitectura web[cite: 1, 2].
-*   `impresora_service.dart`: Algoritmo de división inteligente de comandas y maquetación PDF vectorial en formato A4[cite: 1, 2].
-*   `pedido_screen.dart`: Panel táctil interactivo para seleccionar productos del catálogo, ajustar cantidades dinámicamente y despachar órdenes[cite: 1, 2].
-*   `historial_screen.dart`: Vista de auditoría interna para Leer, Actualizar y Eliminar pedidos del historial local[cite: 1, 2].
+Lo mejor de este enfoque es que **funciona tanto con impresoras que tienen una IP fija como con las que no**. En Android, la app despierta el servicio nativo del sistema y detecta cualquier impresora en la red local. En la Web, simplemente se abre la ventana clásica de impresión de Chrome o Edge, permitiéndote mandarlo a cualquier máquina que ya tengas instalada en la computadora.
 
 ---
 
-## ⚡ Lógica de División de Comandas
-El sistema ya no depende de campos de texto libre[cite: 1, 2]. Al presionar **"Despachar Orden"**, el motor de impresión ejecuta un filtro automático basado en las categorías del menú[cite: 1, 2]:
-1.  **Agrupación:** Separa los artículos del pedido según su destino (ej. *Cocina* o *Bar*)[cite: 1, 2].
-2.  **Fraccionamiento:** Genera y despacha de manera consecutiva comprobantes A4 independientes a cada área de preparación, optimizando los tiempos del restaurante[cite: 1, 2].
+## ¿Cómo está organizado el código? (`lib/`)
+Separé el proyecto de forma súper limpia en 5 archivos dentro de la carpeta `lib`:
+
+* `main.dart`: El arranque oficial de la aplicación.
+* `database_helper.dart`: El cerebro de los datos. Si entras desde el celular, levanta una base de datos SQLite real; si entras desde la web (donde no hay almacenamiento nativo directo), usa una lógica híbrida en memoria para que puedas hacer pruebas al instante.
+* `impresora_service.dart`: Aquí está la magia. Recibe el pedido, diseña el PDF en A4 y se encarga de separar los tickets.
+* `pedido_screen.dart`: La pantalla táctil donde el mesero selecciona los platos del menú, sube o baja cantidades con botones (`+` / `-`) y manda la orden.
+* `historial_screen.dart`: El panel CRUD. Sirve para ver el historial de pedidos guardados, editar una comanda si el cliente cambió de opinión, o borrar un registro.
 
 ---
 
-## ⚙️ Comandos de Ejecución
+## División Inteligente de Comandas (Por Categoría)
+Ya no usamos cuadros de texto libre donde el mesero escribe todo junto. Ahora, al presionar **"Despachar Orden"**, el sistema hace esto de forma automática:
 
-### 📱 Dispositivos Móviles (Android)
-Asegúrate de tener el permiso de `INTERNET` declarado en tu `AndroidManifest.xml`[cite: 1, 2]:
+1.  **Filtra y agrupa:** Revisa qué productos se seleccionaron. Si alguien pidió un "Pollo a la Brasa" (Cocina) y un "Vino Copa" (Bar), el código los separa por su categoría.
+2.  **Lanza tickets independientes:** Genera un voucher PDF A4 exclusivo para la cocina (solo con la comida) y otro exclusivo para el bar (solo con las bebidas), mandando cada cosa a su respectiva área de preparación en segundos.
+
+---
+
+## Comandos para Correr el Proyecto
+
+### Para compilar el APK de Android
+Asegúrate de haber puesto el permiso de `INTERNET` dentro de tu `AndroidManifest.xml` (fuera de la etiqueta `application`) y corre en tu terminal:
 ```bash
 flutter build apk
